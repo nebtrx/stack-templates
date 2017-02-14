@@ -1,0 +1,84 @@
+{-# START_FILE {{name}}.cabal #-}
+name:                {{name}}
+version:             0.1.0.0
+-- synopsis:
+-- description:
+homepage:            https://github.com/{{github-username}}{{^github-username}}githubuser{{/github-username}}/{{name}}#readme
+license:             MIT
+license-file:        LICENSE
+author:              {{author-name}}{{^author-name}}Author name here{{/author-name}}
+maintainer:          {{author-email}}{{^author-email}}example@example.com{{/author-email}}
+copyright:           {{copyright}}{{^copyright}}{{year}}{{^year}}2017{{/year}} {{author-name}}{{^author-name}}Author name here{{/author-name}}{{/copyright}}
+category:            {{category}}{{^category}}Web{{/category}}
+build-type:          Simple
+extra-source-files:  README.md
+cabal-version:       >=1.2
+
+executable {{name}}
+  hs-source-dirs:       app
+  main-is:              Main.hs
+
+  Build-depends:        base                      >= 4     && < 5
+                      , bytestring                >= 0.9.1 && < 0.11
+                      , mtl                       >= 2     && < 3
+                      , snap-core                 >= 1.0   && < 1.1
+                      , snap-server               >= 1.0   && < 1.1
+
+  if impl(ghc >= 6.12.0)
+    ghc-options: -threaded -Wall -fwarn-tabs -funbox-strict-fields -O2
+                 -fno-warn-unused-do-bind
+  else
+    ghc-options: -threaded -Wall -fwarn-tabs -funbox-strict-fields -O2
+
+{-# START_FILE Setup.hs #-}
+import Distribution.Simple
+main = defaultMain
+
+{-# START_FILE app/Main.hs #-}
+{-# LANGUAGE OverloadedStrings #-}
+module Main where
+
+import           Control.Applicative
+import           Snap.Core
+import           Snap.Http.Server
+import           Snap.Util.FileServe
+
+main :: IO ()
+main = quickHttpServe site
+
+site :: Snap ()
+site =
+    ifTop (writeBS "hello world") <|>
+    route [ ("foo", writeBS "bar")
+          , ("echo/:echoparam", echoHandler)
+          ] <|>
+    dir "static" (serveDirectory ".")
+
+echoHandler :: Snap ()
+echoHandler = do
+    param <- getParam "echoparam"
+    maybe (writeBS "must specify echo/param in URL")
+          writeBS param
+
+{-# START_FILE LICENSE #-}
+The MIT License (MIT)
+
+Copyright (c) {{year}}{{^year}}2017{{/year}} {{author-name}}{{^author-name}}Author name here{{/author-name}}
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
