@@ -1,0 +1,436 @@
+{-# START_FILE {{name}}.cabal #-}
+name:                {{name}}
+version:             0.1.0.0
+-- synopsis:
+-- description:
+homepage:            https://github.com/{{github-username}}{{^github-username}}githubuser{{/github-username}}/{{name}}#readme
+license:             MIT
+license-file:        LICENSE
+author:              {{author-name}}{{^author-name}}Author name here{{/author-name}}
+maintainer:          {{author-email}}{{^author-email}}example@example.com{{/author-email}}
+copyright:           {{copyright}}{{^copyright}}{{year}}{{^year}}2017{{/year}} {{author-name}}{{^author-name}}Author name here{{/author-name}}{{/copyright}}
+category:            {{category}}{{^category}}Web{{/category}}
+build-type:          Simple
+extra-source-files:  README.md
+cabal-version:       >=1.2
+
+Flag development
+  Description: Whether to build the server in development (interpreted) mode
+  Default: False
+
+Flag old-base
+  default: False
+  manual: False
+
+executable {{name}}
+  hs-source-dirs:       src
+  main-is:              Main.hs
+  ghc-options:          -threaded -rtsopts -with-rtsopts=-N
+  build-depends:        bytestring                >= 0.9.1   && < 0.11
+                      , heist                     >= 1.0     && < 1.1
+                      , map-syntax                >= 0.2     && < 0.3
+                      , monad-control             >= 1.0     && < 1.1
+                      , mtl                       >= 2       && < 3
+                      , snap                      >= 1.0     && < 1.1
+                      , snap-core                 >= 1.0     && < 1.1
+                      , snap-server               >= 1.0     && < 1.1
+                      , snap-loader-static        >= 1.0     && < 1.1
+                      , text                      >= 0.11    && < 1.3
+                      , time                      >= 1.1     && < 1.7
+                      , xmlhtml                   >= 0.1
+
+  if flag(old-base)
+    build-depends:      base                      >= 4        && < 4.4
+                      , lens                      >= 3.7.6    && < 3.8
+  else
+    build-depends:      base                      >= 4.4      && < 5
+                      , lens                      >= 3.7.6    && < 4.15
+
+  if flag(development)
+    build-depends:      snap-loader-dynamic >= 1.0 && < 1.1
+    cpp-options:        -DDEVELOPMENT
+    -- In development mode, speed is already going to suffer, so skip
+    -- the fancy optimization flags.  Additionally, disable all
+    -- warnings.  The hint library doesn't give an option to execute
+    -- compiled code when there were also warnings, so disabling
+    -- warnings allows quicker workflow.
+    ghc-options:        -threaded -w
+  else
+    if impl(ghc >= 6.12.0)
+      ghc-options:      -threaded -Wall -fwarn-tabs -funbox-strict-fields -O2
+                        -fno-warn-orphans -fno-warn-unused-do-bind
+    else
+      ghc-options:      -threaded -Wall -fwarn-tabs -funbox-strict-fields -O2
+                        -fno-warn-orphans
+  default-language:     Haskell2010
+
+{-# START_FILE Setup.hs #-}
+import Distribution.Simple
+main = defaultMain
+
+{-# START_FILE snaplets/heist/templates/_login.tpl #-}
+<h1>Snap Example App Login</h1>
+
+<p><loginError/></p>
+
+<bind tag="postAction">/login</bind>
+<bind tag="submitText">Login</bind>
+<apply template="userform"/>
+
+<p>Don't have a login yet? <a href="/new_user">Create a new user</a></p>
+
+{-# START_FILE snaplets/heist/templates/_new_user.tpl #-}
+<h1>Register a new user</h1>
+
+<bind tag="postAction">/new_user</bind>
+<bind tag="submitText">Add User</bind>
+<apply template="userform"/>
+
+{-# START_FILE snaplets/heist/templates/base.tpl #-}
+<html>
+  <head>
+    <title>Snap web server</title>
+    <link rel="stylesheet" type="text/css" href="/screen.css"/>
+  </head>
+  <body>
+    <div id="content">
+
+      <apply-content/>
+
+    </div>
+  </body>
+</html>
+
+{-# START_FILE snaplets/heist/templates/index.tpl #-}
+<apply template="base">
+
+  <ifLoggedIn>
+    <p>
+      This is a simple demo page served using
+      <a href="http://snapframework.com/docs/tutorials/heist">Heist</a>
+      and the <a href="http://snapframework.com/">Snap</a> web framework.
+    </p>
+
+    <p>Congrats!  You're logged in as '<loggedInUser/>'</p>
+
+    <p><a href="/logout">Logout</a></p>
+  </ifLoggedIn>
+
+  <ifLoggedOut>
+    <apply template="_login"/>
+  </ifLoggedOut>
+
+</apply>
+
+{-# START_FILE snaplets/heist/templates/login.tpl #-}
+<apply template="base">
+  <apply template="_login"/>
+</apply>
+
+{-# START_FILE snaplets/heist/templates/new_user.tpl #-}
+<apply template="base">
+  <apply template="_new_user" />
+</apply>
+
+{-# START_FILE snaplets/heist/templates/userform.tpl #-}
+<form method="post" action="${postAction}">
+  <table id="info">
+    <tr>
+      <td>Login:</td><td><input type="text" name="login" size="20" /></td>
+    </tr>
+    <tr>
+      <td>Password:</td><td><input type="password" name="password" size="20" /></td>
+    </tr>
+    <tr>
+      <td></td>
+      <td><input type="submit" value="${submitText}" /></td>
+    </tr>
+  </table>
+</form>
+
+{-# START_FILE src/Application.hs #-}
+{-# LANGUAGE TemplateHaskell #-}
+
+------------------------------------------------------------------------------
+-- | This module defines our application's state type and an alias for its
+-- handler monad.
+module Application where
+
+------------------------------------------------------------------------------
+import           Control.Lens
+import           Snap.Snaplet
+import           Snap.Snaplet.Auth
+import           Snap.Snaplet.Heist
+import           Snap.Snaplet.Session
+
+------------------------------------------------------------------------------
+data App = App
+    { _heist :: Snaplet (Heist App)
+    , _sess  :: Snaplet SessionManager
+    , _auth  :: Snaplet (AuthManager App)
+    }
+
+makeLenses ''App
+
+instance HasHeist App where
+    heistLens = subSnaplet heist
+
+
+------------------------------------------------------------------------------
+type AppHandler = Handler App App
+
+{-# START_FILE src/Main.hs #-}
+{-# LANGUAGE CPP             #-}
+{-# LANGUAGE TemplateHaskell #-}
+
+{-
+
+NOTE: Don't modify this file unless you know what you are doing.  If you are
+new to snap, start with Site.hs and Application.hs.  This file contains
+boilerplate needed for dynamic reloading and is not meant for general
+consumption.
+
+Occasionally if we modify the way the dynamic reloader works and you want to
+upgrade, you might have to swap out this file for a newer version.  But in
+most cases you'll never need to modify this code.
+
+-}
+module Main where
+
+------------------------------------------------------------------------------
+import           Control.Exception (SomeException, try)
+import qualified Data.Text as T
+import           Snap.Http.Server
+import           Snap.Snaplet
+import           Snap.Snaplet.Config
+import           Snap.Core
+import           System.IO
+import           Site
+
+#ifdef DEVELOPMENT
+import           Snap.Loader.Dynamic
+#else
+import           Snap.Loader.Static
+#endif
+
+
+------------------------------------------------------------------------------
+-- | This is the entry point for this web server application. It supports
+-- easily switching between interpreting source and running statically compiled
+-- code.
+--
+-- In either mode, the generated program should be run from the root of the
+-- project tree. When it is run, it locates its templates, static content, and
+-- source files in development mode, relative to the current working directory.
+--
+-- When compiled with the development flag, only changes to the libraries, your
+-- cabal file, or this file should require a recompile to be picked up.
+-- Everything else is interpreted at runtime. There are a few consequences of
+-- this.
+--
+-- First, this is much slower. Running the interpreter takes a significant
+-- chunk of time (a couple tenths of a second on the author's machine, at this
+-- time), regardless of the simplicity of the loaded code. In order to
+-- recompile and re-load server state as infrequently as possible, the source
+-- directories are watched for updates, as are any extra directories specified
+-- below.
+--
+-- Second, the generated server binary is MUCH larger, since it links in the
+-- GHC API (via the hint library).
+--
+-- Third, and the reason you would ever want to actually compile with
+-- development mode, is that it enables a faster development cycle. You can
+-- simply edit a file, save your changes, and hit reload to see your changes
+-- reflected immediately.
+--
+-- When this is compiled without the development flag, all the actions are
+-- statically compiled in. This results in faster execution, a smaller binary
+-- size, and having to recompile the server for any code change.
+--
+main :: IO ()
+main = do
+    -- Depending on the version of loadSnapTH in scope, this either enables
+    -- dynamic reloading, or compiles it without. The last argument to
+    -- loadSnapTH is a list of additional directories to watch for changes to
+    -- trigger reloads in development mode. It doesn't need to include source
+    -- directories, those are picked up automatically by the splice.
+    (conf, site, cleanup) <- $(loadSnapTH [| getConf |]
+                                          'getActions
+                                          ["snaplets/heist/templates"])
+
+    _ <- try $ httpServe conf site :: IO (Either SomeException ())
+    cleanup
+
+
+------------------------------------------------------------------------------
+-- | This action loads the config used by this application. The loaded config
+-- is returned as the first element of the tuple produced by the loadSnapTH
+-- Splice. The type is not solidly fixed, though it must be an IO action that
+-- produces the same type as 'getActions' takes. It also must be an instance of
+-- Typeable. If the type of this is changed, a full recompile will be needed to
+-- pick up the change, even in development mode.
+--
+-- This action is only run once, regardless of whether development or
+-- production mode is in use.
+getConf :: IO (Config Snap AppConfig)
+getConf = commandLineAppConfig defaultConfig
+
+
+------------------------------------------------------------------------------
+-- | This function generates the the site handler and cleanup action from the
+-- configuration. In production mode, this action is only run once. In
+-- development mode, this action is run whenever the application is reloaded.
+--
+-- Development mode also makes sure that the cleanup actions are run
+-- appropriately before shutdown. The cleanup action returned from loadSnapTH
+-- should still be used after the server has stopped handling requests, as the
+-- cleanup actions are only automatically run when a reload is triggered.
+--
+-- This sample doesn't actually use the config passed in, but more
+-- sophisticated code might.
+getActions :: Config Snap AppConfig -> IO (Snap (), IO ())
+getActions conf = do
+    (msgs, site, cleanup) <- runSnaplet
+        (appEnvironment =<< getOther conf) app
+    hPutStrLn stderr $ T.unpack msgs
+    return (site, cleanup)
+
+{-# START_FILE src/Site.hs #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+------------------------------------------------------------------------------
+-- | This module is where all the routes and handlers are defined for your
+-- site. The 'app' function is the initializer that combines everything
+-- together and is exported by this module.
+module Site
+  ( app
+  ) where
+
+------------------------------------------------------------------------------
+import           Control.Applicative
+import           Data.ByteString                             (ByteString)
+import           Data.Map.Syntax                             (( ## ))
+import qualified Data.Text                                   as T
+import qualified Heist.Interpreted                           as I
+import           Snap.Core
+import           Snap.Snaplet
+import           Snap.Snaplet.Auth
+import           Snap.Snaplet.Auth.Backends.JsonFile
+import           Snap.Snaplet.Heist
+import           Snap.Snaplet.Session.Backends.CookieSession
+import           Snap.Util.FileServe
+------------------------------------------------------------------------------
+import           Application
+
+
+------------------------------------------------------------------------------
+-- | Render login form
+handleLogin :: Maybe T.Text -> Handler App (AuthManager App) ()
+handleLogin authError = heistLocal (I.bindSplices errs) $ render "login"
+  where
+    errs = maybe mempty splice authError
+    splice err = "loginError" ## I.textSplice err
+
+
+------------------------------------------------------------------------------
+-- | Handle login submit
+handleLoginSubmit :: Handler App (AuthManager App) ()
+handleLoginSubmit =
+    loginUser "login" "password" Nothing
+              (\_ -> handleLogin err) (redirect "/")
+  where
+    err = Just "Unknown user or password"
+
+
+------------------------------------------------------------------------------
+-- | Logs out and redirects the user to the site index.
+handleLogout :: Handler App (AuthManager App) ()
+handleLogout = logout >> redirect "/"
+
+
+------------------------------------------------------------------------------
+-- | Handle new user form submit
+handleNewUser :: Handler App (AuthManager App) ()
+handleNewUser = method GET handleForm <|> method POST handleFormSubmit
+  where
+    handleForm = render "new_user"
+    handleFormSubmit = registerUser "login" "password" >> redirect "/"
+
+
+------------------------------------------------------------------------------
+-- | The application's routes.
+routes :: [(ByteString, Handler App App ())]
+routes = [ ("login",    with auth handleLoginSubmit)
+         , ("logout",   with auth handleLogout)
+         , ("new_user", with auth handleNewUser)
+         , ("",         serveDirectory "static")
+         ]
+
+
+------------------------------------------------------------------------------
+-- | The application initializer.
+app :: SnapletInit App App
+app = makeSnaplet "app" "An snaplet example application." Nothing $ do
+    h <- nestSnaplet "" heist $ heistInit "templates"
+    s <- nestSnaplet "sess" sess $
+           initCookieSessionManager "site_key.txt" "sess" Nothing (Just 3600)
+
+    -- NOTE: We're using initJsonFileAuthManager here because it's easy and
+    -- doesn't require any kind of database server to run.  In practice,
+    -- you'll probably want to change this to a more robust auth backend.
+    a <- nestSnaplet "auth" auth $
+           initJsonFileAuthManager defAuthSettings sess "users.json"
+    addRoutes routes
+    addAuthSplices h auth
+    return $ App h s a
+
+{-# START_FILE static/screen.css #-}
+html {
+   padding: 0;
+   margin: 0;
+   background-color: #ffffff;
+   font-family: Verdana, Helvetica, sans-serif;
+}
+body {
+   padding: 0;
+   margin: 0;
+}
+a {
+   text-decoration: underline;
+}
+a :hover {
+   cursor: pointer;
+   text-decoration: underline;
+}
+img {
+   border: none;
+}
+#content {
+   padding-left: 1em;
+}
+#info {
+   font-size: 60%;
+}
+
+{-# START_FILE LICENSE #-}
+The MIT License (MIT)
+
+Copyright (c) {{year}}{{^year}}2017{{/year}} {{author-name}}{{^author-name}}Author name here{{/author-name}}
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
