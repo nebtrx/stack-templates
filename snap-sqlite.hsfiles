@@ -1,0 +1,715 @@
+{-# START_FILE {{name}}.cabal #-}
+name:                {{name}}
+version:             0.1.0.0
+-- synopsis:
+-- description:
+homepage:            https://github.com/{{github-username}}{{^github-username}}githubuser{{/github-username}}/{{name}}#readme
+license:             MIT
+license-file:        LICENSE
+author:              {{author-name}}{{^author-name}}Author name here{{/author-name}}
+maintainer:          {{author-email}}{{^author-email}}example@example.com{{/author-email}}
+copyright:           {{copyright}}{{^copyright}}{{year}}{{^year}}2017{{/year}} {{author-name}}{{^author-name}}Author name here{{/author-name}}{{/copyright}}
+category:            {{category}}{{^category}}Web{{/category}}
+build-type:          Simple
+extra-source-files:  README.md
+cabal-version:       >=1.8
+
+Flag development
+  Description: Whether to build the server in development (interpreted) mode
+  Default: False
+
+library
+  hs-source-dirs:      src
+  exposed-modules:     Todo.Main
+  other-modules:       Todo.Application
+                     , Todo.Site
+                     , Todo.Db
+                     , Todo.Utilities
+                     , Todo.Types
+  build-depends:       base                      >= 4.7     && < 5
+                     , bytestring                >= 0.9.1   && < 0.11
+                     , heist                     >= 1.0     && < 1.1
+                     , map-syntax                >= 0.2     && < 0.3
+                     , lens                      >= 4.12    && < 4.15
+                     , mtl                       >= 2       && < 3
+                     , snap                      >= 1.0     && <1.1
+                     , snap-core                 >= 1.0     && <1.1
+                     , snap-server               >= 1.0     && <1.1
+                     , snap-loader-static        >= 0.9     && < 1.1
+                     , text                      >= 0.11    && < 1.3
+                     , xmlhtml                   >= 0.1     && < 0.3
+                     , HDBC                      >= 2.3     && <= 2.5
+                     , HDBC-sqlite3              == 2.3.*
+                     , interpolate               >= 0.1 && < 0.2
+
+  default-language:    Haskell2010
+
+  if flag(development)
+    build-depends:    snap-loader-dynamic == 1.*
+    cpp-options:      -DDEVELOPMENT
+    -- In development mode, speed is already going to suffer, so skip
+    -- the fancy optimization flags.  Additionally, disable all
+    -- warnings.  The hint library doesn't give an option to execute
+    -- compiled code when there were also warnings, so disabling
+    -- warnings allows quicker workflow.
+    ghc-options: -threaded -w
+  else
+    if impl(ghc >= 6.12.0)
+      ghc-options:  -threaded -Wall -fwarn-tabs -funbox-strict-fields -O2
+                    -fno-warn-orphans -fno-warn-unused-do-bind
+    else
+      ghc-options:  -Wall -fwarn-tabs -funbox-strict-fields -O2
+                    -fno-warn-orphans
+
+executable {{name}}
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , {{name}}
+  default-language:    Haskell2010
+
+{-# START_FILE Setup.hs #-}
+import Distribution.Simple
+main = defaultMain
+
+{-# START_FILE snaplets/heist/templates/base.tpl #-}
+<html>
+  <head>
+    <title>Simple TODO App</title>
+    <link rel="stylesheet" type="text/css" href="/static/css/site.css"/>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
+  </head>
+  <body>
+    <nav class="navbar navbar-default">
+      <div class="container">
+        <div class="navbar-header">
+          <a href="/" class="navbar-brand">Simple TODO App </a>
+        </div>
+        <ul class="nav navbar-nav navbar-right">
+        </ul>
+      </div>
+    </nav>
+
+    <div class="container">
+      <apply-content/>
+    </div>
+
+    <script src="//code.jquery.com/jquery-2.1.4.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/js/bootstrap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js"></script>
+    <pageScripts/>
+  </body>
+</html>
+
+{-# START_FILE snaplets/heist/templates/todos.tpl #-}
+<apply template="base">
+  <div class="col-xs-6 col-xs-offset-3">
+    <div class="well">
+      <h1>TODO Items</h1>
+      <ul class="list-group">
+        <todos>
+          <input type="hidden" value="${id}">
+          <li class="list-group-item clearfix ${successClass}">
+            <span><description/></span>
+            <div class="pull-right" role="group">
+              <a class="btn btn-xs btn-success img-circle"
+                  onclick="document.getElementById('form-check-${id}').submit();">
+                  ✓
+              </a>
+              <form id="form-check-${id}" action="/todos/${id}/complete/${notCompleted}" method="post" class="hidden-form">
+              </form>
+              <span> </span>
+              <a class="btn btn-xs btn-danger img-circle"
+                  onclick="document.getElementById('form-rmv-${id}').submit();">
+                Ｘ
+              </a>
+              <form id="form-rmv-${id}" action="/todos/${id}/delete" method="post" class="hidden-form">
+              </form>
+            </div>
+          </li>
+        </todos>
+      </ul>
+      <div>
+        <hr>
+        <div class="clearfix">
+          <form class="form-horizontal" action="/todos/new" method="post">
+            <div class="form-group">
+              <label for="description" class="col-md-2 control-label">Task</label>
+              <div class="col-md-10">
+                <input type="text" name="description" class="form-control" placeholder="What do you need to do?" >
+              </div>
+            </div>
+            <div class="row">
+              <div class="col-md-10 col-md-offset-2 text-right">
+                <input type="submit" value="Save Item" class="btn btn-primary">
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</apply>
+
+{-# START_FILE app/Main.hs #-}
+module Main where
+
+import           Todo.Main
+
+main :: IO ()
+main = startTodoApp
+
+{-# START_FILE src/Todo/Application.hs #-}
+{-# LANGUAGE TemplateHaskell #-}
+
+------------------------------------------------------------------------------
+-- | This module defines our application's state type and an alias for its
+-- handler monad.
+module Todo.Application where
+
+------------------------------------------------------------------------------
+import           Control.Lens
+import           Database.HDBC         ()
+import           Database.HDBC.Sqlite3
+import           Snap.Snaplet
+import           Snap.Snaplet.Heist
+
+------------------------------------------------------------------------------
+data App = App
+  { _heist :: Snaplet (Heist App)
+  , _conn  :: Connection
+  }
+
+makeLenses ''App
+
+instance HasHeist App where
+  heistLens = subSnaplet heist
+
+
+------------------------------------------------------------------------------
+type AppHandler = Handler App App
+
+{-# START_FILE src/Todo/Db.hs #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE QuasiQuotes         #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
+module Todo.Db
+    ( startConnection
+    , runMigrations
+    , saveTodo
+    , allTodos
+    , getTodo
+    , deleteTodo
+    , updateTodoCompleted
+    ) where
+
+import           Control.Monad           (unless)
+import           Data.Either             (rights)
+import           Data.Maybe              (fromMaybe, listToMaybe)
+import           Data.String.Interpolate
+import           Database.HDBC
+import           Database.HDBC.Sqlite3
+import           Todo.Types              (Todo (..))
+
+
+-- | Starts Connection
+startConnection :: FilePath
+                -> IO Connection
+startConnection = connectSqlite3
+
+
+-- |  Check if a given table exists
+tableExists :: Connection
+            -> String
+            -> IO Bool
+tableExists conn tblName = do
+  let query = [i| SELECT name
+                  FROM sqlite_master
+                  WHERE type='table' AND name=? |]
+  name <- listToMaybe . fmap rowToValue <$> quickQuery' conn query [toSql tblName]
+  return (name == Just tblName)
+  where
+    rowToValue :: [SqlValue] -> String
+    rowToValue (snippetBody:_) = fromSql snippetBody
+    rowToValue _               = error "Unable to read single value"
+
+
+-- | Created the Todo table
+createTodoTable :: Connection
+                -> IO ()
+createTodoTable conn = do
+  let query = [i| CREATE TABLE todos (
+                  id INTEGER PRIMARY KEY,
+                  description TEXT,
+                  completed BOOLEAN)|]
+
+  quickQuery' conn query []
+  commit conn
+
+
+-- | Check required table are present.
+-- If not, then performs the required operations to achieve it
+runMigrations :: Connection
+              -> IO ()
+runMigrations conn = do
+  -- Note: for a real app, you probably want to create a 'version'
+  -- table too and use it to keep track of schema version and
+  -- implement your schema upgrade procedure here.
+  schemaCreated <- tableExists conn "todos"
+  unless schemaCreated $ createTodoTable conn
+
+
+-- | Builds a Todo data value from a Sql Row
+rowToTodo :: [SqlValue]
+          -> Either String Todo
+rowToTodo(todoId:todoDescription:todoCompleted:_) =
+  Right Todo  { todoID =  fromSql todoId
+              , description = fromSql todoDescription
+              , completed  = fromSql todoCompleted
+              }
+rowToTodo _ = Left "Unable to create Todo data type from Row"
+
+
+-- | Creates a new Todo row in the database
+saveTodo  :: Connection
+          -> Todo
+          -> IO ()
+saveTodo conn todo =
+  maybe newTodo updateTodo (todoID todo)
+  where
+    newTodo :: IO ()
+    newTodo = do
+      let query = [i| INSERT INTO todos(description, completed)
+                      VALUES(?,?)|]
+      execQuery query [toSql $ description todo
+                      ,toSql $ completed todo
+                      ]
+    updateTodo :: Int -> IO ()
+    updateTodo todoid = do
+      let query = [i| UPDATE todos SET description = ?, completed = ?
+                      WHERE (id = ?)|]
+      execQuery query [toSql $ description todo
+                      ,toSql $ completed todo
+                      ,toSql todoid
+                      ]
+    execQuery :: String -> [SqlValue] -> IO ()
+    execQuery q p  = do
+      quickQuery' conn q p
+      commit conn
+
+
+-- | Retrieves all Todos rows from the database
+allTodos  :: Connection
+          -> IO [Todo]
+allTodos conn = do
+  let query = [i| SELECT id, description, completed
+                  FROM todos
+                  ORDER BY completed ASC|]
+  rights . fmap rowToTodo <$> quickQuery' conn query []
+
+
+-- | Retrieves a specific Todo data value from the database
+getTodo :: Connection
+        -> Int
+        -> IO Todo
+getTodo conn todoId = do
+  let query = [i| SELECT id, description, completed
+                  FROM todos
+                  WHERE id = ?|]
+
+  maybeTodo <- listToMaybe . rights . fmap rowToTodo <$> quickQuery' conn query [toSql todoId]
+  let todo = fromMaybe undefined maybeTodo
+  return todo
+
+
+-- | Removes a specific Todo row from the database
+deleteTodo  :: Connection
+            -> Int
+            -> IO ()
+deleteTodo conn todoId = do
+  let query = [i| DELETE FROM todos
+                  WHERE id = ?|]
+
+  quickQuery' conn query [toSql todoId]
+  commit conn
+
+
+-- | Returns a Todo data value with the provided completed value
+updateTodoCompleted :: Todo
+                    -> Bool -- ^ The completed value
+                    -> Todo
+updateTodoCompleted (Todo tId tDescription _) =
+  Todo tId tDescription
+
+{-# START_FILE src/Todo/Main.hs #-}
+{-# LANGUAGE CPP             #-}
+{-# LANGUAGE TemplateHaskell #-}
+
+{-
+
+NOTE: Don't modify this file unless you know what you are doing.  If you are
+new to snap, start with Site.hs and Application.hs.  This file contains
+boilerplate needed for dynamic reloading and is not meant for general
+consumption.
+
+Occasionally if we modify the way the dynamic reloader works and you want to
+upgrade, you might have to swap out this file for a newer version.  But in
+most cases you'll never need to modify this code.
+
+-}
+module Todo.Main
+    ( startTodoApp
+    ) where
+
+------------------------------------------------------------------------------
+import           Control.Exception   (SomeException, try)
+import qualified Data.Text           as T
+import           Snap.Core
+import           Snap.Http.Server
+import           Snap.Snaplet
+import           Snap.Snaplet.Config
+import           System.IO
+import           Todo.Site
+
+#ifdef DEVELOPMENT
+import           Snap.Loader.Dynamic
+#else
+import           Snap.Loader.Static
+#endif
+
+
+------------------------------------------------------------------------------
+-- | This is the entry point for this web server application. It supports
+-- easily switching between interpreting source and running statically compiled
+-- code.
+--
+-- In either mode, the generated program should be run from the root of the
+-- project tree. When it is run, it locates its templates, static content, and
+-- source files in development mode, relative to the current working directory.
+--
+-- When compiled with the development flag, only changes to the libraries, your
+-- cabal file, or this file should require a recompile to be picked up.
+-- Everything else is interpreted at runtime. There are a few consequences of
+-- this.
+--
+-- First, this is much slower. Running the interpreter takes a significant
+-- chunk of time (a couple tenths of a second on the author's machine, at this
+-- time), regardless of the simplicity of the loaded code. In order to
+-- recompile and re-load server state as infrequently as possible, the source
+-- directories are watched for updates, as are any extra directories specified
+-- below.
+--
+-- Second, the generated server binary is MUCH larger, since it links in the
+-- GHC API (via the hint library).
+--
+-- Third, and the reason you would ever want to actually compile with
+-- development mode, is that it enables a faster development cycle. You can
+-- simply edit a file, save your changes, and hit reload to see your changes
+-- reflected immediately.
+--
+-- When this is compiled without the development flag, all the actions are
+-- statically compiled in. This results in faster execution, a smaller binary
+-- size, and having to recompile the server for any code change.
+--
+startTodoApp :: IO ()
+startTodoApp = do
+  -- Depending on the version of loadSnapTH in scope, this either enables
+  -- dynamic reloading, or compiles it without. The last argument to
+  -- loadSnapTH is a list of additional directories to watch for changes to
+  -- trigger reloads in development mode. It doesn't need to include source
+  -- directories, those are picked up automatically by the splice.
+  (conf, site, cleanup) <- $(loadSnapTH [| getConf |]
+                                        'getActions
+                                        ["snaplets/heist/templates"])
+
+  _ <- try $ httpServe conf site :: IO (Either SomeException ())
+  cleanup
+
+
+------------------------------------------------------------------------------
+-- | This action loads the config used by this application. The loaded config
+-- is returned as the first element of the tuple produced by the loadSnapTH
+-- Splice. The type is not solidly fixed, though it must be an IO action that
+-- produces the same type as 'getActions' takes. It also must be an instance of
+-- Typeable. If the type of this is changed, a full recompile will be needed to
+-- pick up the change, even in development mode.
+--
+-- This action is only run once, regardless of whether development or
+-- production mode is in use.
+getConf :: IO (Config Snap AppConfig)
+getConf = commandLineAppConfig defaultConfig
+
+
+------------------------------------------------------------------------------
+-- | This function generates the the site handler and cleanup action from the
+-- configuration. In production mode, this action is only run once. In
+-- development mode, this action is run whenever the application is reloaded.
+--
+-- Development mode also makes sure that the cleanup actions are run
+-- appropriately before shutdown. The cleanup action returned from loadSnapTH
+-- should still be used after the server has stopped handling requests, as the
+-- cleanup actions are only automatically run when a reload is triggered.
+--
+-- This sample doesn't actually use the config passed in, but more
+-- sophisticated code might.
+getActions :: Config Snap AppConfig -> IO (Snap (), IO ())
+getActions conf = do
+  (msgs, site, cleanup) <- runSnaplet
+      (appEnvironment =<< getOther conf) app
+  hPutStrLn stderr $ T.unpack msgs
+  return (site, cleanup)
+
+{-# START_FILE src/Todo/Site.hs #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+------------------------------------------------------------------------------
+-- | This module is where all the routes and handlers are defined for your
+-- site. The 'app' function is the initializer that combines everything
+-- together and is exported by this module.
+module Todo.Site
+    ( app
+    ) where
+
+------------------------------------------------------------------------------
+import           Control.Applicative
+import           Control.Monad.State
+import           Data.ByteString                             (ByteString)
+import           Data.Map.Syntax                             (( ## ))
+import           Data.Maybe                                  (fromMaybe)
+import           Heist
+import           Heist.Interpreted                           (mapSplices,
+                                                              runChildrenWith,
+                                                              textSplice)
+import           Snap.Core                                   (Method (..),
+                                                              getParam,
+                                                              getPostParam,
+                                                              method, redirect)
+import           Snap.Snaplet
+import           Snap.Snaplet.Heist
+import           Snap.Snaplet.Session.Backends.CookieSession ()
+import           Snap.Util.FileServe
+------------------------------------------------------------------------------
+import           Todo.Application
+import qualified Todo.Db                                     as Db
+import           Todo.Utilities
+
+import qualified Todo.Types                                  as T
+
+------------------------------------------------------------------------------
+-- | GET '/'
+handleIndexTodo :: Handler App App ()
+handleIndexTodo = do
+  c <- gets _conn
+  todos <- liftIO $ Db.allTodos c
+  renderWithSplices "todos" $
+    "todos" ## spliceForTodos todos
+
+
+------------------------------------------------------------------------------
+-- | POST: /todos/new
+handleNewTodo :: Handler App App ()
+handleNewTodo = do
+  maybeDescriptionBs <- getPostParam "description"
+  case maybeDescriptionBs of
+    -- Note: for a real app, you should validate a required
+    -- 'description' parameter using digestive functors.
+    -- In this example we just ignored that and redirect to '/'
+    -- for the sake of simplicity.
+    Nothing -> redirect "/"
+    Just descriptionBs -> do
+        c <- gets _conn
+        let todo = T.Todo Nothing (byteStringToText descriptionBs) False
+        liftIO $ Db.saveTodo c todo
+        redirect "/"
+
+
+------------------------------------------------------------------------------
+-- | POST: /todos/:id/complete/:completed
+handleCompleteTodo :: Handler App App ()
+handleCompleteTodo = do
+  maybeTodoIdBs <- getParam "todoId"
+  maybeCompletedBs <- getParam "completed"
+  case maybeTodoIdBs of
+    -- Note: for a real app, you should validate a required
+    -- 'completed' parameter using digestive functors and
+    -- redirect to a not found page if you can't find the
+    -- row identified by the todo id.
+    -- In this example we just ignore all that and redirect to '/'
+    -- for the sake of simplicity.
+    Nothing -> redirect "/"
+    Just todoIdBs -> do
+        c <- gets _conn
+        let todoId = fromBSTo 0 todoIdBs :: Int
+        todo <- liftIO $ Db.getTodo c todoId
+        let updatedCompletedValue = fromBSTo False (fromMaybeBs maybeCompletedBs) :: Bool
+        liftIO $ Db.saveTodo c (Db.updateTodoCompleted todo updatedCompletedValue)
+        redirect "/"
+
+  where
+    fromMaybeBs :: Maybe ByteString -> ByteString
+    fromMaybeBs = fromMaybe ""
+
+
+------------------------------------------------------------------------------
+-- | POST: /todos/:id/delete/
+handleDeleteTodo :: Handler App App ()
+handleDeleteTodo = do
+  maybeTodoIdBs <- getParam "todoId"
+  case maybeTodoIdBs of
+    -- Note: for a real app, you should redirect to a not found
+    -- page if you can't find the row identified by the todo id
+    -- In this example we just ignore that and redirect to '/'
+    -- for the sake of simplicity.
+    Nothing -> redirect "/"
+    Just todoIdBs -> do
+        c <- gets _conn
+        let todoId = fromBSTo 0 todoIdBs :: Int
+        liftIO $ Db.deleteTodo c todoId
+        redirect "/"
+
+
+------------------------------------------------------------------------------
+-- | Splice to display Todos
+spliceForTodos :: [T.Todo] -> SnapletISplice App
+spliceForTodos = mapSplices $ runChildrenWith . spliceForTodo
+
+
+------------------------------------------------------------------------------
+-- | Splice to display a simple Todo
+spliceForTodo :: T.Todo -> Splices (SnapletISplice App)
+spliceForTodo todo = do
+  "id"  ## textSplice . showAsText $ fromMaybe 0 ( T.todoID todo )
+  "description"  ## textSplice $ T.description todo
+  "completed"  ## textSplice . showAsText $ T.completed todo
+  "notCompleted"  ## textSplice . showAsText $ not (T.completed todo)
+  "successClass" ## textSplice $  if T.completed todo
+                                    then "list-group-item-success"
+                                    else ""
+
+------------------------------------------------------------------------------
+-- | The application's routes.
+routes :: [(ByteString, Handler App App ())]
+routes = [ ("/",                                    handleIndexTodo)
+         , ("/todos/new",                           method GET handleIndexTodo
+                                                <|> method POST handleNewTodo)
+         , ("/todos/:todoId/complete/:completed",   method POST handleCompleteTodo)
+         , ("/todos/:todoId/delete",                method POST handleDeleteTodo)
+         , ("/static",                              serveDirectory "static")
+         ]
+
+
+------------------------------------------------------------------------------
+-- | The application initializer.
+app :: SnapletInit App App
+app = makeSnaplet "app" "An snaplet example application." Nothing $ do
+  h <- nestSnaplet "heist" heist $ heistInit "templates"
+  c <- liftIO $ Db.startConnection "todos.db"
+  liftIO $ Db.runMigrations c
+
+  addRoutes routes
+  return $ App h c
+
+{-# START_FILE src/Todo/Types.hs #-}
+module Todo.Types
+    ( Todo(..)
+    ) where
+
+import           Data.Text (Text)
+
+-- | Todo data type definition
+data Todo = Todo
+          { todoID      :: Maybe Int
+          , description :: Text
+          , completed   :: Bool
+          }
+  deriving (Eq, Show, Read)
+
+{-# START_FILE src/Todo/Utilities.hs #-}
+module Todo.Utilities
+  ( showAsText
+  , byteStringToText
+  , fromBSTo
+  ) where
+
+import           Data.ByteString    (ByteString)
+import           Data.Maybe         (fromMaybe)
+import qualified Data.Text          as T
+import qualified Data.Text.Encoding as E
+import           Text.Read          (readMaybe)
+
+-- | Returns a Data.Text.Text value from a data
+-- type value implementing class Show
+showAsText  :: Show a => a
+            -> T.Text
+showAsText = T.pack . show
+
+-- | Returns a Data.Text.Text value from a ByteString one
+byteStringToText  :: ByteString
+                  -> T.Text
+byteStringToText = E.decodeUtf8
+
+-- | Returns a String value from a ByteString one
+byteStringToStr :: ByteString
+                -> String
+byteStringToStr =  T.unpack . E.decodeUtf8
+
+-- | Returns a value implementing Show class from a ByteString value.
+-- It receives a default value in case the converation fails.
+-- Notice you have explicitely specify the type of a
+fromBSTo  :: Read a => a
+          -> ByteString
+          -> a
+fromBSTo defaultValue bs = fromMaybe defaultValue (readMaybe ( byteStringToStr bs))
+
+{-# START_FILE static/css/site.css #-}
+.hidden-form {
+  display: none;
+}
+
+li.list-group-item-success > span {
+  text-decoration:line-through;
+}
+
+{-# START_FILE stack.yaml #-}
+resolver: lts-7.18
+
+packages:
+- '.'
+
+extra-deps:
+  - snap-loader-dynamic-1.0.0.0
+  - snap-loader-static-1.0.0.0
+  - digestive-functors-0.8.2.0
+  - digestive-functors-heist-0.8.7.0
+  - digestive-functors-snap-0.7.0.0
+  - snap-1.0.0.1
+  - HDBC-sqlite3-2.3.3.1
+  - heist-1.0.1.0
+  - map-syntax-0.2.0.2
+
+extra-package-dbs: []
+
+{-# START_FILE LICENSE #-}
+The MIT License (MIT)
+
+Copyright (c) {{year}}{{^year}}2017{{/year}} {{author-name}}{{^author-name}}Author name here{{/author-name}}
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
